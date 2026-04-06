@@ -103,7 +103,7 @@ async function findAnchors(
   const rankedLists: Doc<"eventNodes">[][] = [];
 
   // Signal A: Vector similarity
-  const vecResults = await ctx.runQuery(
+  const vecResults = await ctx.runAction(
     internal.memory.graphUtils.findSimilarNodes,
     {
       embedding: signals.embedding,

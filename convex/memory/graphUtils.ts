@@ -1,4 +1,5 @@
-import { internalQuery } from "../_generated/server";
+import { internalQuery, internalAction } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import { Doc, Id } from "../_generated/dataModel";
 
@@ -208,8 +209,9 @@ export const getNeighborhood = internalQuery({
   },
 });
 
-// Vector search for semantically similar nodes
-export const findSimilarNodes = internalQuery({
+// Vector search for semantically similar nodes.
+// Must be an action because ctx.vectorSearch is only available in actions.
+export const findSimilarNodes = internalAction({
   args: {
     embedding: v.array(v.float64()),
     scope: v.string(),
@@ -219,16 +221,18 @@ export const findSimilarNodes = internalQuery({
   handler: async (ctx, args) => {
     const results = await ctx.vectorSearch("eventNodes", "by_embedding", {
       vector: args.embedding,
-      limit: args.limit + 1, // +1 in case we need to exclude self
-      filter: (q) => q.eq("scope", args.scope),
+      limit: args.limit + 1,
+      filter: (q: any) => q.eq("scope", args.scope),
     });
 
-    // Exclude self if needed, fetch full docs
+    // Exclude self if needed, fetch full docs via runQuery helper
     const nodes: Array<{ node: Doc<"eventNodes">; score: number }> = [];
     for (const r of results) {
       if (args.excludeId && r._id === args.excludeId) continue;
       if (nodes.length >= args.limit) break;
-      const node = await ctx.db.get(r._id);
+      const node = await ctx.runQuery(internal.memory.graphUtils.getNode, {
+        id: r._id,
+      });
       if (node) nodes.push({ node, score: r._score });
     }
     return nodes;

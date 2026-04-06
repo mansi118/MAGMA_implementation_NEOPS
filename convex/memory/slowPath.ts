@@ -1,4 +1,4 @@
-import { internalAction, internalMutation } from "../_generated/server";
+import { internalAction, internalMutation, internalQuery } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import { Id, Doc } from "../_generated/dataModel";
@@ -8,7 +8,7 @@ import { getChatClient, CHAT_MODEL } from "./llm";
 
 const MAX_BATCH_SIZE = 10; // Max items per cron invocation
 const TIME_LIMIT_MS = 25_000; // 25s safety margin within 30s cron interval
-const SEMANTIC_THRESHOLD = 0.75;
+const SEMANTIC_THRESHOLD = 0.45;
 const CAUSAL_CONFIDENCE_THRESHOLD = 0.6;
 
 // ─── Mutations ───
@@ -165,8 +165,8 @@ export const enrichEntities = internalMutation({
 // ─── LLM Helpers ───
 
 interface CausalEdgeCandidate {
-  fromLabel: string;
-  toLabel: string;
+  from_label: string;
+  to_label: string;
   confidence: number;
   reasoning: string;
 }
@@ -327,12 +327,14 @@ async function consolidateOne(
 
   // Step 1: Causal inference (try/catch — don't block other steps)
   try {
+    console.log(`[consolidation] ${targetNode._id}: neighborhood=${neighborhood.length} nodes`);
     if (neighborhood.length > 1) {
       const causalCandidates = await inferCausalEdges(
         targetNode,
         neighborhood,
         labelMap
       );
+      console.log(`[consolidation] ${targetNode._id}: causal candidates=${causalCandidates.length}`, JSON.stringify(causalCandidates));
 
       const existingCausal = await ctx.runQuery(
         internal.memory.graphUtils.getCausalEdgesForNode,
@@ -351,8 +353,18 @@ async function consolidateOne(
       }> = [];
 
       for (const candidate of causalCandidates) {
-        const fromId = labelMap.get(candidate.fromLabel);
-        const toId = labelMap.get(candidate.toLabel);
+        // Extract the label (e.g., "n1") from possibly verbose LLM output.
+        // The LLM might return "n1", "[n1]", or "[n1] [date] content..." — handle all.
+        const extractLabel = (raw: unknown): string | null => {
+          if (typeof raw !== "string") return null;
+          const match = raw.match(/(n\d+)/);
+          return match ? match[1] : null;
+        };
+        const fromLabel = extractLabel(candidate.from_label);
+        const toLabel = extractLabel(candidate.to_label);
+        if (!fromLabel || !toLabel) continue;
+        const fromId = labelMap.get(fromLabel);
+        const toId = labelMap.get(toLabel);
         if (!fromId || !toId) continue;
         if (candidate.confidence < CAUSAL_CONFIDENCE_THRESHOLD) continue;
 
@@ -384,7 +396,7 @@ async function consolidateOne(
 
   // Step 2: Semantic edges (try/catch)
   try {
-    const similarNodes = await ctx.runQuery(
+    const similarNodes = await ctx.runAction(
       internal.memory.graphUtils.findSimilarNodes,
       {
         embedding: targetNode.embedding,
@@ -580,8 +592,8 @@ export const forceConsolidate = internalAction({
   },
 });
 
-// Helper: find queue item by eventNodeId
-export const findQueueItem = internalMutation({
+// Helper: find queue item by eventNodeId (read-only)
+export const findQueueItem = internalQuery({
   args: { eventNodeId: v.id("eventNodes") },
   handler: async (ctx, args) => {
     return await ctx.db

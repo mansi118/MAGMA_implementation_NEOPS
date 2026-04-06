@@ -215,7 +215,7 @@ export const baselineQuery = action({
     // Just embed the query and do vector search — nothing else
     const embedding = await generateEmbedding(args.queryText);
 
-    const results = await ctx.runQuery(
+    const results = await ctx.runAction(
       internal.memory.graphUtils.findSimilarNodes,
       { embedding, scope: args.scope, limit }
     );
