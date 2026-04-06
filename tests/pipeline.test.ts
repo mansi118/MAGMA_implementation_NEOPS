@@ -7,7 +7,6 @@
  */
 
 import { describe, it, expect } from "vitest";
-import OpenAI from "openai";
 import {
   cosineSimilarity,
   scoreTransition,
@@ -17,32 +16,27 @@ import {
   INTENT_WEIGHTS,
   DEFAULT_CONFIG,
 } from "../convex/memory/traversal";
+import {
+  getChatClient,
+  getEmbeddingClient,
+  CHAT_MODEL,
+  EMBEDDING_MODEL,
+} from "../convex/memory/llm";
 import { makeNode } from "./helpers";
 
-const GROQ_KEY = process.env.GROQ_API_KEY;
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
-const hasKeys = !!GROQ_KEY && !!OPENROUTER_KEY;
-
-const chatClient = new OpenAI({
-  apiKey: GROQ_KEY,
-  baseURL: "https://api.groq.com/openai/v1",
-});
-const embeddingClient = new OpenAI({
-  apiKey: OPENROUTER_KEY,
-  baseURL: "https://openrouter.ai/api/v1",
-});
+const hasKeys = !!process.env.GROQ_API_KEY && !!process.env.OPENROUTER_API_KEY;
 
 async function embed(text: string): Promise<number[]> {
-  const r = await embeddingClient.embeddings.create({
-    model: "openai/text-embedding-3-small",
+  const r = await getEmbeddingClient().embeddings.create({
+    model: EMBEDDING_MODEL,
     input: text,
   });
   return r.data[0].embedding;
 }
 
 async function classifyIntent(query: string): Promise<string> {
-  const r = await chatClient.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
+  const r = await getChatClient().chat.completions.create({
+    model: CHAT_MODEL,
     messages: [
       {
         role: "system",
@@ -259,8 +253,8 @@ describe.skipIf(!hasKeys)("Pipeline: Full Traversal with Real Embeddings", () =>
 
 describe.skipIf(!hasKeys)("Pipeline: Causal Inference via LLM", () => {
   it("infers correct causal edges from Zoo Media scenario", async () => {
-    const response = await chatClient.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+    const response = await getChatClient().chat.completions.create({
+      model: CHAT_MODEL,
       messages: [
         {
           role: "user",

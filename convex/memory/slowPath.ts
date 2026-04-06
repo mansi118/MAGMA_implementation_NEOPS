@@ -327,14 +327,12 @@ async function consolidateOne(
 
   // Step 1: Causal inference (try/catch — don't block other steps)
   try {
-    console.log(`[consolidation] ${targetNode._id}: neighborhood=${neighborhood.length} nodes`);
     if (neighborhood.length > 1) {
       const causalCandidates = await inferCausalEdges(
         targetNode,
         neighborhood,
         labelMap
       );
-      console.log(`[consolidation] ${targetNode._id}: causal candidates=${causalCandidates.length}`, JSON.stringify(causalCandidates));
 
       const existingCausal = await ctx.runQuery(
         internal.memory.graphUtils.getCausalEdgesForNode,

@@ -197,8 +197,12 @@ export const query = action({
     const stage1Time = Date.now();
 
     // ── Stage 2: Anchor Identification via RRF ──
-    const topK = Math.min(args.options?.maxNodes ?? 10, 15);
-    const anchors = await findAnchors(ctx, signals, args.scope, topK);
+    // Anchors are entry points into the graph — keep them small so the beam
+    // search has room to discover nodes via graph traversal. Without this,
+    // all events become anchors and traversal never fires.
+    const maxNodes = args.options?.maxNodes ?? 10;
+    const anchorCount = Math.min(Math.ceil(maxNodes / 3), 8);
+    const anchors = await findAnchors(ctx, signals, args.scope, anchorCount);
 
     if (anchors.length === 0) {
       return {

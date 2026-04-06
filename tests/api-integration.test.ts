@@ -7,29 +7,18 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import OpenAI from "openai";
+import {
+  getChatClient,
+  getEmbeddingClient,
+  CHAT_MODEL,
+  EMBEDDING_MODEL,
+} from "../convex/memory/llm";
 
-const GROQ_KEY = process.env.GROQ_API_KEY;
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
-
-const chatClient = new OpenAI({
-  apiKey: GROQ_KEY,
-  baseURL: "https://api.groq.com/openai/v1",
-});
-
-const embeddingClient = new OpenAI({
-  apiKey: OPENROUTER_KEY,
-  baseURL: "https://openrouter.ai/api/v1",
-});
-
-const CHAT_MODEL = "llama-3.3-70b-versatile";
-const EMBEDDING_MODEL = "openai/text-embedding-3-small";
-
-const hasKeys = !!GROQ_KEY && !!OPENROUTER_KEY;
+const hasKeys = !!process.env.GROQ_API_KEY && !!process.env.OPENROUTER_API_KEY;
 
 describe.skipIf(!hasKeys)("Groq Chat API", () => {
   it("returns valid JSON with response_format", async () => {
-    const response = await chatClient.chat.completions.create({
+    const response = await getChatClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         {
@@ -49,7 +38,7 @@ describe.skipIf(!hasKeys)("Groq Chat API", () => {
   }, 15000);
 
   it("handles intent classification prompt", async () => {
-    const response = await chatClient.chat.completions.create({
+    const response = await getChatClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         {
@@ -72,7 +61,7 @@ describe.skipIf(!hasKeys)("Groq Chat API", () => {
   }, 15000);
 
   it("handles entity extraction prompt", async () => {
-    const response = await chatClient.chat.completions.create({
+    const response = await getChatClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         {
@@ -99,7 +88,7 @@ describe.skipIf(!hasKeys)("Groq Chat API", () => {
   }, 15000);
 
   it("handles causal inference prompt", async () => {
-    const response = await chatClient.chat.completions.create({
+    const response = await getChatClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         {
@@ -139,7 +128,7 @@ Rules: cause must be earlier than effect, confidence > 0.6, at least one endpoin
   }, 15000);
 
   it("handles event segmentation prompt", async () => {
-    const response = await chatClient.chat.completions.create({
+    const response = await getChatClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         {
@@ -170,7 +159,7 @@ Rules: cause must be earlier than effect, confidence > 0.6, at least one endpoin
   }, 15000);
 
   it("handles entity classification prompt", async () => {
-    const response = await chatClient.chat.completions.create({
+    const response = await getChatClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         {
@@ -202,7 +191,7 @@ Return JSON: {"entities": [{"name": "...", "type": "person"|"company"|"project"|
 
 describe.skipIf(!hasKeys)("OpenRouter Embeddings API", () => {
   it("returns 1536-dimensional embedding", async () => {
-    const response = await embeddingClient.embeddings.create({
+    const response = await getEmbeddingClient().embeddings.create({
       model: EMBEDDING_MODEL,
       input: "Met with Akhilesh from Zoo Media",
     });
@@ -217,15 +206,15 @@ describe.skipIf(!hasKeys)("OpenRouter Embeddings API", () => {
 
   it("similar texts produce similar embeddings", async () => {
     const [r1, r2, r3] = await Promise.all([
-      embeddingClient.embeddings.create({
+      getEmbeddingClient().embeddings.create({
         model: EMBEDDING_MODEL,
         input: "data privacy concerns in the project",
       }),
-      embeddingClient.embeddings.create({
+      getEmbeddingClient().embeddings.create({
         model: EMBEDDING_MODEL,
         input: "privacy issues raised about the project",
       }),
-      embeddingClient.embeddings.create({
+      getEmbeddingClient().embeddings.create({
         model: EMBEDDING_MODEL,
         input: "the weather is sunny today in Mumbai",
       }),
