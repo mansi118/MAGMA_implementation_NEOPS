@@ -1,10 +1,13 @@
 /**
  * Seed script: Inserts the 15 Zoo Media test events into the MAGMA Context Vault.
  *
- * Usage: npx convex run memory/ingest:ingest --args '...'
- *   or via this script with the Convex client: npx tsx scripts/seed.ts
+ * Prerequisites:
+ *   1. Run `npx convex dev` first to generate types and deploy schema
+ *   2. Set OPENAI_API_KEY in Convex: `npx convex env set OPENAI_API_KEY sk-...`
+ *   3. Set CONVEX_URL env var: `export CONVEX_URL=$(npx convex env get CONVEX_URL)`
+ *      or find it in .env.local after running `npx convex dev`
  *
- * Events are inserted in chronological order so temporal edges form correctly.
+ * Usage: npx tsx scripts/seed.ts
  */
 
 import { ConvexHttpClient } from "convex/browser";
@@ -12,7 +15,11 @@ import { api } from "../convex/_generated/api";
 
 const CONVEX_URL = process.env.CONVEX_URL;
 if (!CONVEX_URL) {
-  console.error("Missing CONVEX_URL env var. Run: npx convex env get CONVEX_URL");
+  console.error(
+    "Missing CONVEX_URL. Set it via:\n" +
+      '  export CONVEX_URL="your-convex-deployment-url"\n' +
+      "  (find it in .env.local or run: npx convex env get CONVEX_URL)"
+  );
   process.exit(1);
 }
 
@@ -22,7 +29,7 @@ const client = new ConvexHttpClient(CONVEX_URL);
 
 interface TestEvent {
   content: string;
-  eventTime: number; // Unix ms
+  eventTime: number;
   entities: string[];
   keywords: string[];
   temporalCue?: string;
@@ -62,7 +69,8 @@ const EVENTS: TestEvent[] = [
     temporalCue: "Jan 12",
   },
   {
-    content: "Rahul prepared a data privacy addendum addressing Akhilesh's concerns",
+    content:
+      "Rahul prepared a data privacy addendum addressing Akhilesh's concerns",
     eventTime: toMs("2025-01-14"),
     entities: ["rahul", "akhilesh"],
     keywords: ["data privacy", "addendum", "privacy addendum"],
@@ -76,7 +84,8 @@ const EVENTS: TestEvent[] = [
     temporalCue: "Jan 15",
   },
   {
-    content: "Zoo Media internal review — Akhilesh forwarded to their legal team",
+    content:
+      "Zoo Media internal review — Akhilesh forwarded to their legal team",
     eventTime: toMs("2025-01-18"),
     entities: ["zoo media", "akhilesh"],
     keywords: ["internal review", "legal team", "forwarded"],
@@ -143,16 +152,21 @@ const EVENTS: TestEvent[] = [
 // ─── Seed Runner ───
 
 async function seed() {
-  console.log("🌱 Seeding 15 Zoo Media test events...\n");
+  console.log("Seeding 15 Zoo Media test events...\n");
 
+  // Insert sequentially to guarantee temporal edge ordering.
+  // Each action awaits its mutation before returning, so the next event
+  // can correctly find its temporal predecessor.
   for (let i = 0; i < EVENTS.length; i++) {
     const event = EVENTS[i];
     const date = new Date(event.eventTime).toISOString().slice(0, 10);
 
-    console.log(`  [${i + 1}/15] ${date} — ${event.content.slice(0, 60)}...`);
+    process.stdout.write(
+      `  [${String(i + 1).padStart(2)}/15] ${date} — ${event.content.slice(0, 55)}...`
+    );
 
     try {
-      const nodeId = await client.action(api.memory.ingest.ingest, {
+      const nodeId = await client.action(api.memory.api.ingestEvent, {
         content: event.content,
         scope: "company" as const,
         sourceType: "observation",
@@ -163,24 +177,17 @@ async function seed() {
         temporalCue: event.temporalCue,
       });
 
-      console.log(`         → Node: ${nodeId}`);
-    } catch (err) {
-      console.error(`         ✗ Failed: ${err}`);
-    }
-
-    // Small delay between inserts to ensure temporal edge ordering
-    if (i < EVENTS.length - 1) {
-      await new Promise((r) => setTimeout(r, 1000));
+      console.log(` OK [${nodeId}]`);
+    } catch (err: any) {
+      console.log(` FAIL: ${err.message ?? err}`);
     }
   }
 
-  console.log("\n✅ Seeding complete.");
-  console.log(
-    "   Consolidation queue has 15 pending items. The cron will process them at ~1 per 30s."
-  );
-  console.log(
-    "   Full consolidation takes ~7.5 minutes. Run eval after consolidation."
-  );
+  console.log("\nSeeding complete.");
+  console.log("  15 items queued for consolidation (cron runs every 30s).");
+  console.log("  Full consolidation takes ~8 minutes.");
+  console.log("  Monitor: npx convex dashboard → consolidationQueue table");
+  console.log("  Then run: npx tsx scripts/eval.ts");
 }
 
 seed().catch(console.error);

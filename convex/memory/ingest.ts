@@ -1,9 +1,11 @@
-import { action } from "../_generated/server";
+import { internalAction } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import { generateEmbedding, extractMetadata } from "./embedding";
 
-export const ingest = action({
+// Internal action — called by segmentAndIngest, ingestBatch, and the public
+// ingestEvent wrapper in api.ts. Not directly exposed to clients.
+export const ingest = internalAction({
   args: {
     content: v.string(),
     scope: v.union(v.literal("company"), v.literal("private")),

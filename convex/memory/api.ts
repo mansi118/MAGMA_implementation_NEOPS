@@ -2,11 +2,38 @@ import { action, query as convexQuery } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import { Doc, Id } from "../_generated/dataModel";
+import { generateEmbedding } from "./embedding";
 
 // ─── Write API ───
 
+// Public wrapper around the internal ingest action.
+// This is the entry point for external callers (scripts, NEops via HTTP).
+export const ingestEvent = action({
+  args: {
+    content: v.string(),
+    scope: v.union(v.literal("company"), v.literal("private")),
+    sourceType: v.string(),
+    sourceId: v.optional(v.string()),
+    eventTime: v.optional(v.number()),
+    entities: v.optional(v.array(v.string())),
+    keywords: v.optional(v.array(v.string())),
+    temporalCue: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.runAction(internal.memory.ingest.ingest, {
+      content: args.content,
+      scope: args.scope,
+      sourceType: args.sourceType,
+      sourceId: args.sourceId,
+      eventTime: args.eventTime,
+      entities: args.entities,
+      keywords: args.keywords,
+      temporalCue: args.temporalCue,
+    });
+  },
+});
+
 // Ingest a batch of events in parallel.
-// Each item can optionally include pre-extracted metadata.
 export const ingestBatch = action({
   args: {
     events: v.array(
@@ -60,7 +87,6 @@ export const getEntityHistory = action({
       }
     );
 
-    // Already sorted by eventTime desc from the query
     return events.map((e: Doc<"eventNodes">) => ({
       id: e._id,
       content: e.content,
@@ -104,11 +130,13 @@ export const getTimeline = action({
 export const getCausalChain = action({
   args: {
     eventNodeId: v.id("eventNodes"),
-    direction: v.optional(v.union(v.literal("forward"), v.literal("backward"))),
+    direction: v.optional(
+      v.union(v.literal("forward"), v.literal("backward"))
+    ),
     maxDepth: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const direction = args.direction ?? "backward"; // default: trace causes
+    const direction = args.direction ?? "backward";
     const maxDepth = args.maxDepth ?? 5;
     const chain: Array<{
       id: string;
@@ -141,7 +169,6 @@ export const getCausalChain = action({
           depth,
         });
 
-        // Follow causal edges in the specified direction
         const causalEdges = await ctx.runQuery(
           internal.memory.graphUtils.getCausalEdgesForNode,
           { nodeId }
@@ -149,12 +176,10 @@ export const getCausalChain = action({
 
         for (const edge of causalEdges) {
           if (direction === "backward" && edge.toNode === nodeId) {
-            // This node is the effect — follow to the cause
             if (!visited.has(edge.fromNode)) {
               nextFrontier.push(edge.fromNode);
             }
           } else if (direction === "forward" && edge.fromNode === nodeId) {
-            // This node is the cause — follow to the effect
             if (!visited.has(edge.toNode)) {
               nextFrontier.push(edge.toNode);
             }
@@ -166,9 +191,68 @@ export const getCausalChain = action({
       if (frontier.length === 0) break;
     }
 
-    // Sort by eventTime
     chain.sort((a, b) => a.eventTime - b.eventTime);
     return chain;
+  },
+});
+
+// ─── Baseline Query (for eval comparison) ───
+
+// Pure vector similarity search — no graph traversal, no intent classification.
+// This is what a flat embedding store (pre-MAGMA Context Vault) would return.
+export const baselineQuery = action({
+  args: {
+    queryText: v.string(),
+    scope: v.union(v.literal("company"), v.literal("private")),
+    maxNodes: v.optional(v.number()),
+    tokenBudget: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const startTime = Date.now();
+    const limit = args.maxNodes ?? 10;
+    const tokenBudget = args.tokenBudget ?? 4000;
+
+    // Just embed the query and do vector search — nothing else
+    const embedding = await generateEmbedding(args.queryText);
+
+    const results = await ctx.runQuery(
+      internal.memory.graphUtils.findSimilarNodes,
+      { embedding, scope: args.scope, limit }
+    );
+
+    // Linearize by similarity score (highest first)
+    let context = "";
+    let tokenCount = 0;
+    const nodes: Array<{
+      id: string;
+      content: string;
+      eventTime: number;
+      score: number;
+    }> = [];
+
+    for (const r of results) {
+      const date = new Date(r.node.eventTime).toISOString().slice(0, 10);
+      const line = `[${date}] ${r.node.content} [ref:${r.node._id}]\n`;
+      const lineTokens = Math.ceil(line.length / 4);
+
+      if (tokenCount + lineTokens > tokenBudget) break;
+
+      context += line;
+      tokenCount += lineTokens;
+      nodes.push({
+        id: r.node._id,
+        content: r.node.content,
+        eventTime: r.node.eventTime,
+        score: r.score,
+      });
+    }
+
+    return {
+      context,
+      nodes,
+      nodesRetrieved: nodes.length,
+      latencyMs: Date.now() - startTime,
+    };
   },
 });
 
@@ -180,7 +264,6 @@ export const getGraphStats = convexQuery({
     scope: v.optional(v.union(v.literal("company"), v.literal("private"))),
   },
   handler: async (ctx, args) => {
-    // Count event nodes
     let eventNodesQuery = ctx.db.query("eventNodes");
     if (args.scope) {
       eventNodesQuery = eventNodesQuery.withIndex("by_scope", (q) =>
@@ -189,7 +272,6 @@ export const getGraphStats = convexQuery({
     }
     const eventNodes = await eventNodesQuery.collect();
 
-    // Count entity nodes
     let entityNodesQuery = ctx.db.query("entityNodes");
     if (args.scope) {
       entityNodesQuery = entityNodesQuery.withIndex("by_scope", (q) =>
@@ -198,7 +280,6 @@ export const getGraphStats = convexQuery({
     }
     const entityNodes = await entityNodesQuery.collect();
 
-    // Count edges by type
     let temporalQuery = ctx.db.query("temporalEdges");
     if (args.scope) {
       temporalQuery = temporalQuery.withIndex("by_scope", (q) =>
@@ -266,11 +347,6 @@ export const getConsolidationStatus = convexQuery({
     const processing = all.filter((i) => i.status === "processing").length;
     const done = all.filter((i) => i.status === "done").length;
 
-    return {
-      total: all.length,
-      pending,
-      processing,
-      done,
-    };
+    return { total: all.length, pending, processing, done };
   },
 });
