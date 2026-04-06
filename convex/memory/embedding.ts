@@ -1,15 +1,15 @@
-import { openai, CHAT_MODEL, EMBEDDING_MODEL } from "./llm";
+import { chatClient, embeddingClient, CHAT_MODEL, EMBEDDING_MODEL } from "./llm";
 
-// Generate a 1536d embedding using text-embedding-3-small via OpenRouter
+// Generate a 1536d embedding via OpenRouter (Groq doesn't support embeddings)
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const response = await openai.embeddings.create({
+  const response = await embeddingClient.embeddings.create({
     model: EMBEDDING_MODEL,
     input: text,
   });
   return response.data[0].embedding;
 }
 
-// Extract entities, keywords, and temporal cues from raw content via LLM
+// Extract entities, keywords, and temporal cues from raw content via Groq
 export interface ExtractedMetadata {
   entities: string[];
   keywords: string[];
@@ -35,7 +35,7 @@ export async function extractMetadata(
   content: string
 ): Promise<ExtractedMetadata> {
   try {
-    const response = await openai.chat.completions.create({
+    const response = await chatClient.chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         { role: "system", content: EXTRACTION_PROMPT },

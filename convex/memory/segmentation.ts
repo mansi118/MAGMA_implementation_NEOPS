@@ -1,7 +1,7 @@
 import { action } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
-import { openai, CHAT_MODEL } from "./llm";
+import { chatClient, CHAT_MODEL } from "./llm";
 
 // ─── Types ───
 
@@ -44,7 +44,7 @@ Rules:
 
 export async function segmentText(rawText: string): Promise<SegmentedEvent[]> {
   try {
-    const response = await openai.chat.completions.create({
+    const response = await chatClient.chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         { role: "system", content: SEGMENTATION_PROMPT },

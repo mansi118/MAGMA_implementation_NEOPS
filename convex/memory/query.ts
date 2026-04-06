@@ -3,7 +3,7 @@ import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import { Doc, Id } from "../_generated/dataModel";
 import { generateEmbedding } from "./embedding";
-import { openai, CHAT_MODEL } from "./llm";
+import { chatClient, CHAT_MODEL } from "./llm";
 import {
   adaptiveTraversal,
   synthesizeContext,
@@ -45,7 +45,7 @@ For time references, parse to ISO dates. Use the current year if not specified.`
 
 async function analyzeQuery(queryText: string): Promise<Omit<QuerySignals, "embedding">> {
   try {
-    const response = await openai.chat.completions.create({
+    const response = await chatClient.chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         { role: "system", content: ANALYSIS_PROMPT },

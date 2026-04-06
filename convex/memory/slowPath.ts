@@ -2,7 +2,7 @@ import { internalAction, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import { Id, Doc } from "../_generated/dataModel";
-import { openai, CHAT_MODEL } from "./llm";
+import { chatClient, CHAT_MODEL } from "./llm";
 
 // ─── Config ───
 
@@ -222,7 +222,7 @@ Rules:
 - At least one endpoint of each edge must be the target event [${targetLabel}]
 - If no causal relationships exist, return {"causal_edges": []}`;
 
-  const response = await openai.chat.completions.create({
+  const response = await chatClient.chat.completions.create({
     model: CHAT_MODEL,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
@@ -268,7 +268,7 @@ Role definitions:
 - participant: involved but not primary actor or target
 - owner: the entity that owns/controls something referenced`;
 
-  const response = await openai.chat.completions.create({
+  const response = await chatClient.chat.completions.create({
     model: CHAT_MODEL,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
