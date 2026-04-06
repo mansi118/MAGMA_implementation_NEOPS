@@ -293,7 +293,7 @@ export const query = action({
 
     const endTime = Date.now();
 
-    return {
+    const response = {
       context: synthesis.context,
       nodes: synthesis.nodes,
       intent: signals.intent,
@@ -310,5 +310,12 @@ export const query = action({
         stage4_synthesis: endTime - stage3Time,
       },
     };
+
+    // Structured query trace for observability
+    console.log(
+      `[query] "${args.queryText.slice(0, 50)}" → intent=${signals.intent} anchors=${anchors.length} nodes=${subgraph.length} latency=${response.latencyMs.total}ms (analysis=${response.latencyMs.stage1_analysis} anchors=${response.latencyMs.stage2_anchors} traversal=${response.latencyMs.stage3_traversal} synthesis=${response.latencyMs.stage4_synthesis})`
+    );
+
+    return response;
   },
 });

@@ -350,3 +350,24 @@ export const getConsolidationStatus = convexQuery({
     return { total: all.length, pending, processing, done };
   },
 });
+
+// Reset all stuck "processing" items back to pending.
+// Use when consolidation workers have crashed and left items in limbo.
+export const resetStuck = action({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.runMutation(internal.memory.slowPath.resetAllStuck);
+  },
+});
+
+// Force-consolidate a specific event node (skips queue, processes immediately).
+// Useful during development to avoid waiting for cron.
+export const forceConsolidate = action({
+  args: { eventNodeId: v.id("eventNodes") },
+  handler: async (ctx, args) => {
+    return await ctx.runAction(
+      internal.memory.slowPath.forceConsolidate,
+      { eventNodeId: args.eventNodeId }
+    );
+  },
+});
