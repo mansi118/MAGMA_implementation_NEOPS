@@ -1,8 +1,8 @@
-import { chatClient, embeddingClient, CHAT_MODEL, EMBEDDING_MODEL } from "./llm";
+import { getChatClient, getEmbeddingClient, CHAT_MODEL, EMBEDDING_MODEL } from "./llm";
 
 // Generate a 1536d embedding via OpenRouter (Groq doesn't support embeddings)
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const response = await embeddingClient.embeddings.create({
+  const response = await getEmbeddingClient().embeddings.create({
     model: EMBEDDING_MODEL,
     input: text,
   });
@@ -35,7 +35,7 @@ export async function extractMetadata(
   content: string
 ): Promise<ExtractedMetadata> {
   try {
-    const response = await chatClient.chat.completions.create({
+    const response = await getChatClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         { role: "system", content: EXTRACTION_PROMPT },
