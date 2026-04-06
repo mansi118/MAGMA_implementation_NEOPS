@@ -1,9 +1,7 @@
 import { action } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
-import OpenAI from "openai";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import { openai, CHAT_MODEL } from "./llm";
 
 // ─── Types ───
 
@@ -47,7 +45,7 @@ Rules:
 export async function segmentText(rawText: string): Promise<SegmentedEvent[]> {
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: CHAT_MODEL,
       messages: [
         { role: "system", content: SEGMENTATION_PROMPT },
         { role: "user", content: rawText },

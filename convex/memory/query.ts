@@ -2,8 +2,8 @@ import { action } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import { Doc, Id } from "../_generated/dataModel";
-import OpenAI from "openai";
 import { generateEmbedding } from "./embedding";
+import { openai, CHAT_MODEL } from "./llm";
 import {
   adaptiveTraversal,
   synthesizeContext,
@@ -11,8 +11,6 @@ import {
   TraversalConfig,
 } from "./traversal";
 import { NeighborResult } from "./graphUtils";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ─── Stage 1: Query Analysis ───
 
@@ -48,7 +46,7 @@ For time references, parse to ISO dates. Use the current year if not specified.`
 async function analyzeQuery(queryText: string): Promise<Omit<QuerySignals, "embedding">> {
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: CHAT_MODEL,
       messages: [
         { role: "system", content: ANALYSIS_PROMPT },
         { role: "user", content: queryText },

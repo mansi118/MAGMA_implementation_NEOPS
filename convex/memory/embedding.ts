@@ -1,17 +1,15 @@
-import OpenAI from "openai";
+import { openai, CHAT_MODEL, EMBEDDING_MODEL } from "./llm";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// Generate a 1536d embedding using text-embedding-3-small
+// Generate a 1536d embedding using text-embedding-3-small via OpenRouter
 export async function generateEmbedding(text: string): Promise<number[]> {
   const response = await openai.embeddings.create({
-    model: "text-embedding-3-small",
+    model: EMBEDDING_MODEL,
     input: text,
   });
   return response.data[0].embedding;
 }
 
-// Extract entities, keywords, and temporal cues from raw content via GPT-4o-mini
+// Extract entities, keywords, and temporal cues from raw content via LLM
 export interface ExtractedMetadata {
   entities: string[];
   keywords: string[];
@@ -38,7 +36,7 @@ export async function extractMetadata(
 ): Promise<ExtractedMetadata> {
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: CHAT_MODEL,
       messages: [
         { role: "system", content: EXTRACTION_PROMPT },
         { role: "user", content },
@@ -59,7 +57,6 @@ export async function extractMetadata(
       temporalCue: parsed.temporal_cue ?? null,
     };
   } catch {
-    // Fallback: if LLM call fails, still allow ingestion with empty metadata
     return { entities: [], keywords: [], temporalCue: null };
   }
 }

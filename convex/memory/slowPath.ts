@@ -2,9 +2,7 @@ import { internalAction, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { v } from "convex/values";
 import { Id, Doc } from "../_generated/dataModel";
-import OpenAI from "openai";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import { openai, CHAT_MODEL } from "./llm";
 
 // ─── Config ───
 
@@ -225,7 +223,7 @@ Rules:
 - If no causal relationships exist, return {"causal_edges": []}`;
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: CHAT_MODEL,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     temperature: 0,
@@ -271,7 +269,7 @@ Role definitions:
 - owner: the entity that owns/controls something referenced`;
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: CHAT_MODEL,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     temperature: 0,
