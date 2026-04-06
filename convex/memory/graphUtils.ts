@@ -289,3 +289,149 @@ export const getCausalEdgesForNode = internalQuery({
     return [...asFrom, ...asTo];
   },
 });
+
+// ─── Query Pipeline Support ───
+
+// Full-text search on event content (Stage 2, Signal B)
+export const searchByContent = internalQuery({
+  args: {
+    searchText: v.string(),
+    scope: v.string(),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("eventNodes")
+      .withSearchIndex("by_content", (q) =>
+        q.search("content", args.searchText).eq("scope", args.scope)
+      )
+      .take(args.limit);
+  },
+});
+
+// Temporal range query (Stage 2, Signal C)
+export const getEventsByTimeRange = internalQuery({
+  args: {
+    scope: v.string(),
+    start: v.number(),
+    end: v.number(),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("eventNodes")
+      .withIndex("by_scope_eventTime", (q) =>
+        q.eq("scope", args.scope).gte("eventTime", args.start).lte("eventTime", args.end)
+      )
+      .take(args.limit);
+  },
+});
+
+// Entity-based event lookup (Stage 2, Signal D)
+// Given an entity name, find all events linked to that entity.
+export const getEventsByEntity = internalQuery({
+  args: {
+    entityName: v.string(),
+    scope: v.string(),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    // Find the entity node
+    const entity = await ctx.db
+      .query("entityNodes")
+      .withIndex("by_name_scope", (q) =>
+        q.eq("name", args.entityName.toLowerCase()).eq("scope", args.scope)
+      )
+      .first();
+
+    if (!entity) return [];
+
+    // Get all event edges for this entity, sorted by most recent
+    const edges = await ctx.db
+      .query("entityEdges")
+      .withIndex("by_entity", (q) => q.eq("entityNode", entity._id))
+      .collect();
+
+    // Fetch event nodes
+    const events: Doc<"eventNodes">[] = [];
+    for (const edge of edges) {
+      if (events.length >= args.limit) break;
+      const node = await ctx.db.get(edge.eventNode);
+      if (node) events.push(node);
+    }
+
+    // Sort by eventTime descending (most recent first)
+    events.sort((a, b) => b.eventTime - a.eventTime);
+    return events.slice(0, args.limit);
+  },
+});
+
+// Entity graph traversal: find events linked to the same entities as the given event.
+// This is a 2-hop traversal: eventNode → entityNode → other eventNodes.
+// Used during beam search for entity-type edge scoring.
+export const getEntityLinkedEvents = internalQuery({
+  args: {
+    eventNodeId: v.id("eventNodes"),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const max = args.limit ?? 15;
+
+    // Get entities linked to this event
+    const entityEdges = await ctx.db
+      .query("entityEdges")
+      .withIndex("by_event", (q) => q.eq("eventNode", args.eventNodeId))
+      .collect();
+
+    const seen = new Set<string>([args.eventNodeId]);
+    const results: Array<{ node: Doc<"eventNodes">; entityName: string }> = [];
+
+    for (const edge of entityEdges) {
+      if (results.length >= max) break;
+
+      const entity = await ctx.db.get(edge.entityNode);
+      if (!entity) continue;
+
+      // Get other events linked to this entity
+      const linkedEdges = await ctx.db
+        .query("entityEdges")
+        .withIndex("by_entity", (q) => q.eq("entityNode", edge.entityNode))
+        .collect();
+
+      for (const linked of linkedEdges) {
+        if (results.length >= max) break;
+        if (seen.has(linked.eventNode)) continue;
+        seen.add(linked.eventNode);
+
+        const node = await ctx.db.get(linked.eventNode);
+        if (node) results.push({ node, entityName: entity.name });
+      }
+    }
+
+    return results;
+  },
+});
+
+// Get causal edges between a set of node IDs — used for topological sort in synthesis
+export const getCausalEdgesBetween = internalQuery({
+  args: { nodeIds: v.array(v.id("eventNodes")) },
+  handler: async (ctx, args) => {
+    const idSet = new Set(args.nodeIds.map((id) => id.toString()));
+    const edges: Doc<"causalEdges">[] = [];
+
+    for (const nodeId of args.nodeIds) {
+      const fromEdges = await ctx.db
+        .query("causalEdges")
+        .withIndex("by_from", (q) => q.eq("fromNode", nodeId))
+        .collect();
+
+      for (const edge of fromEdges) {
+        if (idSet.has(edge.toNode.toString())) {
+          edges.push(edge);
+        }
+      }
+    }
+
+    return edges;
+  },
+});
