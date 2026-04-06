@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "npx convex dev",
     "seed": "npx tsx scripts/seed.ts",
-    "eval": "npx tsx scripts/eval.ts"
+    "eval": "npx tsx scripts/eval.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +19,7 @@
   },
   "devDependencies": {
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
   }
 }
