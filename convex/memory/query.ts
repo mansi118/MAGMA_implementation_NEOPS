@@ -22,7 +22,10 @@ interface QuerySignals {
   embedding: number[];
 }
 
-const ANALYSIS_PROMPT = `Analyze this query for a memory retrieval system.
+function getAnalysisPrompt(): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return `Analyze this query for a memory retrieval system.
+Current date: ${today}
 
 Return JSON:
 {
@@ -41,14 +44,15 @@ Intent definitions:
 - HOW: Asks for process, method ("how did we do X?", "what steps were taken?")
 
 Pick the single dominant intent. If the query mentions a specific entity prominently, prefer ENTITY.
-For time references, parse to ISO dates. Use the current year if not specified.`;
+For time references, resolve relative dates ("last week", "yesterday") using the current date above.`;
+}
 
 async function analyzeQuery(queryText: string): Promise<Omit<QuerySignals, "embedding">> {
   try {
     const response = await getChatClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
-        { role: "system", content: ANALYSIS_PROMPT },
+        { role: "system", content: getAnalysisPrompt() },
         { role: "user", content: queryText },
       ],
       response_format: { type: "json_object" },
@@ -186,9 +190,12 @@ export const query = action({
   handler: async (ctx, args) => {
     const startTime = Date.now();
 
+    // Input validation
+    const queryText = args.queryText.slice(0, 2000); // Cap at 2K chars
+
     // ── Stage 1: Query Analysis + Embedding (parallel) ──
     const [analysis, embedding] = await Promise.all([
-      analyzeQuery(args.queryText),
+      analyzeQuery(queryText),
       generateEmbedding(args.queryText),
     ]);
 
@@ -229,10 +236,10 @@ export const query = action({
     const fetchNeighbors = async (
       nodeId: Id<"eventNodes">
     ): Promise<Array<{ node: Doc<"eventNodes">; edgeType: string }>> => {
-      // Get temporal + causal + semantic neighbors
+      // Get temporal + causal + semantic neighbors (scope-filtered)
       const neighbors: NeighborResult[] = await ctx.runQuery(
         internal.memory.graphUtils.getNeighbors,
-        { nodeId }
+        { nodeId, scope: args.scope }
       );
 
       const results: Array<{ node: Doc<"eventNodes">; edgeType: string }> =
@@ -241,10 +248,10 @@ export const query = action({
           edgeType: n.edgeType,
         }));
 
-      // Also get entity-linked events (the entity graph 2-hop)
+      // Also get entity-linked events (scope-filtered)
       const entityLinked = await ctx.runQuery(
         internal.memory.graphUtils.getEntityLinkedEvents,
-        { eventNodeId: nodeId, limit: 10 }
+        { eventNodeId: nodeId, limit: 10, scope: args.scope }
       );
 
       for (const e of entityLinked) {

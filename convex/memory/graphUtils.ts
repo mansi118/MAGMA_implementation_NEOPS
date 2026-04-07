@@ -22,70 +22,72 @@ export const getNode = internalQuery({
 });
 
 // Get all direct neighbors of a node across temporal, causal, and semantic edges.
-// Does NOT traverse entity edges (those link to entityNodes, not eventNodes).
+// Scope-filtered: only returns nodes matching the specified scope.
+// Edge queries are bounded with .take(50) to prevent OOM on hub nodes.
 export const getNeighbors = internalQuery({
-  args: { nodeId: v.id("eventNodes") },
+  args: { nodeId: v.id("eventNodes"), scope: v.optional(v.string()) },
   handler: async (ctx, args): Promise<NeighborResult[]> => {
     const results: NeighborResult[] = [];
+    const EDGE_LIMIT = 50;
 
-    // Temporal: forward (this node → next)
     const tempForward = await ctx.db
       .query("temporalEdges")
       .withIndex("by_from", (q) => q.eq("fromNode", args.nodeId))
-      .collect();
+      .take(EDGE_LIMIT);
     for (const edge of tempForward) {
       const node = await ctx.db.get(edge.toNode);
-      if (node) results.push({ node, edgeType: "temporal", direction: "forward", edgeWeight: 1.0 });
+      if (node && (!args.scope || node.scope === args.scope))
+        results.push({ node, edgeType: "temporal", direction: "forward", edgeWeight: 1.0 });
     }
 
-    // Temporal: backward (prev node → this node)
     const tempBackward = await ctx.db
       .query("temporalEdges")
       .withIndex("by_to", (q) => q.eq("toNode", args.nodeId))
-      .collect();
+      .take(EDGE_LIMIT);
     for (const edge of tempBackward) {
       const node = await ctx.db.get(edge.fromNode);
-      if (node) results.push({ node, edgeType: "temporal", direction: "backward", edgeWeight: 1.0 });
+      if (node && (!args.scope || node.scope === args.scope))
+        results.push({ node, edgeType: "temporal", direction: "backward", edgeWeight: 1.0 });
     }
 
-    // Causal: forward (this node caused something)
     const causalForward = await ctx.db
       .query("causalEdges")
       .withIndex("by_from", (q) => q.eq("fromNode", args.nodeId))
-      .collect();
+      .take(EDGE_LIMIT);
     for (const edge of causalForward) {
       const node = await ctx.db.get(edge.toNode);
-      if (node) results.push({ node, edgeType: "causal", direction: "forward", edgeWeight: edge.confidence });
+      if (node && (!args.scope || node.scope === args.scope))
+        results.push({ node, edgeType: "causal", direction: "forward", edgeWeight: edge.confidence });
     }
 
-    // Causal: backward (something caused this node)
     const causalBackward = await ctx.db
       .query("causalEdges")
       .withIndex("by_to", (q) => q.eq("toNode", args.nodeId))
-      .collect();
+      .take(EDGE_LIMIT);
     for (const edge of causalBackward) {
       const node = await ctx.db.get(edge.fromNode);
-      if (node) results.push({ node, edgeType: "causal", direction: "backward", edgeWeight: edge.confidence });
+      if (node && (!args.scope || node.scope === args.scope))
+        results.push({ node, edgeType: "causal", direction: "backward", edgeWeight: edge.confidence });
     }
 
-    // Semantic: nodeA direction
     const semA = await ctx.db
       .query("semanticEdges")
       .withIndex("by_nodeA", (q) => q.eq("nodeA", args.nodeId))
-      .collect();
+      .take(EDGE_LIMIT);
     for (const edge of semA) {
       const node = await ctx.db.get(edge.nodeB);
-      if (node) results.push({ node, edgeType: "semantic", direction: "forward", edgeWeight: edge.similarity });
+      if (node && (!args.scope || node.scope === args.scope))
+        results.push({ node, edgeType: "semantic", direction: "forward", edgeWeight: edge.similarity });
     }
 
-    // Semantic: nodeB direction
     const semB = await ctx.db
       .query("semanticEdges")
       .withIndex("by_nodeB", (q) => q.eq("nodeB", args.nodeId))
-      .collect();
+      .take(EDGE_LIMIT);
     for (const edge of semB) {
       const node = await ctx.db.get(edge.nodeA);
-      if (node) results.push({ node, edgeType: "semantic", direction: "forward", edgeWeight: edge.similarity });
+      if (node && (!args.scope || node.scope === args.scope))
+        results.push({ node, edgeType: "semantic", direction: "forward", edgeWeight: edge.similarity });
     }
 
     return results;
@@ -93,22 +95,34 @@ export const getNeighbors = internalQuery({
 });
 
 // N-hop neighborhood expansion. Returns unique event nodes within N hops.
-// Cap at maxNodes to prevent runaway traversals.
+// Scope-filtered and bounded to prevent OOM.
 export const getNeighborhood = internalQuery({
   args: {
     nodeId: v.id("eventNodes"),
     hops: v.number(),
     maxNodes: v.optional(v.number()),
+    scope: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Doc<"eventNodes">[]> => {
     const max = args.maxNodes ?? 20;
+    const EDGE_LIMIT = 50;
     const visited = new Set<string>([args.nodeId]);
     let frontier: Id<"eventNodes">[] = [args.nodeId];
     const allNodes: Doc<"eventNodes">[] = [];
 
-    // Get the target node itself
     const targetNode = await ctx.db.get(args.nodeId);
     if (targetNode) allNodes.push(targetNode);
+
+    // Helper: fetch node, check scope, add to frontier if valid
+    const tryAdd = async (nodeId: Id<"eventNodes">, nextFrontier: Id<"eventNodes">[]) => {
+      if (visited.has(nodeId) || allNodes.length >= max) return;
+      visited.add(nodeId);
+      const n = await ctx.db.get(nodeId);
+      if (n && (!args.scope || n.scope === args.scope)) {
+        allNodes.push(n);
+        nextFrontier.push(nodeId);
+      }
+    };
 
     for (let hop = 0; hop < args.hops; hop++) {
       const nextFrontier: Id<"eventNodes">[] = [];
@@ -116,89 +130,23 @@ export const getNeighborhood = internalQuery({
       for (const nodeId of frontier) {
         if (allNodes.length >= max) break;
 
-        // Inline neighbor fetching to stay within single query context
-        // Temporal forward
-        const tf = await ctx.db
-          .query("temporalEdges")
-          .withIndex("by_from", (q) => q.eq("fromNode", nodeId))
-          .collect();
-        for (const e of tf) {
-          if (!visited.has(e.toNode) && allNodes.length < max) {
-            visited.add(e.toNode);
-            nextFrontier.push(e.toNode);
-            const n = await ctx.db.get(e.toNode);
-            if (n) allNodes.push(n);
-          }
-        }
+        const tf = await ctx.db.query("temporalEdges").withIndex("by_from", (q) => q.eq("fromNode", nodeId)).take(EDGE_LIMIT);
+        for (const e of tf) await tryAdd(e.toNode, nextFrontier);
 
-        // Temporal backward
-        const tb = await ctx.db
-          .query("temporalEdges")
-          .withIndex("by_to", (q) => q.eq("toNode", nodeId))
-          .collect();
-        for (const e of tb) {
-          if (!visited.has(e.fromNode) && allNodes.length < max) {
-            visited.add(e.fromNode);
-            nextFrontier.push(e.fromNode);
-            const n = await ctx.db.get(e.fromNode);
-            if (n) allNodes.push(n);
-          }
-        }
+        const tb = await ctx.db.query("temporalEdges").withIndex("by_to", (q) => q.eq("toNode", nodeId)).take(EDGE_LIMIT);
+        for (const e of tb) await tryAdd(e.fromNode, nextFrontier);
 
-        // Causal forward
-        const cf = await ctx.db
-          .query("causalEdges")
-          .withIndex("by_from", (q) => q.eq("fromNode", nodeId))
-          .collect();
-        for (const e of cf) {
-          if (!visited.has(e.toNode) && allNodes.length < max) {
-            visited.add(e.toNode);
-            nextFrontier.push(e.toNode);
-            const n = await ctx.db.get(e.toNode);
-            if (n) allNodes.push(n);
-          }
-        }
+        const cf = await ctx.db.query("causalEdges").withIndex("by_from", (q) => q.eq("fromNode", nodeId)).take(EDGE_LIMIT);
+        for (const e of cf) await tryAdd(e.toNode, nextFrontier);
 
-        // Causal backward
-        const cb = await ctx.db
-          .query("causalEdges")
-          .withIndex("by_to", (q) => q.eq("toNode", nodeId))
-          .collect();
-        for (const e of cb) {
-          if (!visited.has(e.fromNode) && allNodes.length < max) {
-            visited.add(e.fromNode);
-            nextFrontier.push(e.fromNode);
-            const n = await ctx.db.get(e.fromNode);
-            if (n) allNodes.push(n);
-          }
-        }
+        const cb = await ctx.db.query("causalEdges").withIndex("by_to", (q) => q.eq("toNode", nodeId)).take(EDGE_LIMIT);
+        for (const e of cb) await tryAdd(e.fromNode, nextFrontier);
 
-        // Semantic (both directions since undirected)
-        const sa = await ctx.db
-          .query("semanticEdges")
-          .withIndex("by_nodeA", (q) => q.eq("nodeA", nodeId))
-          .collect();
-        for (const e of sa) {
-          if (!visited.has(e.nodeB) && allNodes.length < max) {
-            visited.add(e.nodeB);
-            nextFrontier.push(e.nodeB);
-            const n = await ctx.db.get(e.nodeB);
-            if (n) allNodes.push(n);
-          }
-        }
+        const sa = await ctx.db.query("semanticEdges").withIndex("by_nodeA", (q) => q.eq("nodeA", nodeId)).take(EDGE_LIMIT);
+        for (const e of sa) await tryAdd(e.nodeB, nextFrontier);
 
-        const sb = await ctx.db
-          .query("semanticEdges")
-          .withIndex("by_nodeB", (q) => q.eq("nodeB", nodeId))
-          .collect();
-        for (const e of sb) {
-          if (!visited.has(e.nodeA) && allNodes.length < max) {
-            visited.add(e.nodeA);
-            nextFrontier.push(e.nodeA);
-            const n = await ctx.db.get(e.nodeA);
-            if (n) allNodes.push(n);
-          }
-        }
+        const sb = await ctx.db.query("semanticEdges").withIndex("by_nodeB", (q) => q.eq("nodeB", nodeId)).take(EDGE_LIMIT);
+        for (const e of sb) await tryAdd(e.nodeA, nextFrontier);
       }
 
       frontier = nextFrontier;
@@ -377,15 +325,16 @@ export const getEntityLinkedEvents = internalQuery({
   args: {
     eventNodeId: v.id("eventNodes"),
     limit: v.optional(v.number()),
+    scope: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const max = args.limit ?? 15;
+    const EDGE_LIMIT = 50;
 
-    // Get entities linked to this event
     const entityEdges = await ctx.db
       .query("entityEdges")
       .withIndex("by_event", (q) => q.eq("eventNode", args.eventNodeId))
-      .collect();
+      .take(EDGE_LIMIT);
 
     const seen = new Set<string>([args.eventNodeId]);
     const results: Array<{ node: Doc<"eventNodes">; entityName: string }> = [];
@@ -396,11 +345,10 @@ export const getEntityLinkedEvents = internalQuery({
       const entity = await ctx.db.get(edge.entityNode);
       if (!entity) continue;
 
-      // Get other events linked to this entity
       const linkedEdges = await ctx.db
         .query("entityEdges")
         .withIndex("by_entity", (q) => q.eq("entityNode", edge.entityNode))
-        .collect();
+        .take(EDGE_LIMIT);
 
       for (const linked of linkedEdges) {
         if (results.length >= max) break;
@@ -408,7 +356,9 @@ export const getEntityLinkedEvents = internalQuery({
         seen.add(linked.eventNode);
 
         const node = await ctx.db.get(linked.eventNode);
-        if (node) results.push({ node, entityName: entity.name });
+        // Scope filter: only return nodes in the requested scope
+        if (node && (!args.scope || node.scope === args.scope))
+          results.push({ node, entityName: entity.name });
       }
     }
 

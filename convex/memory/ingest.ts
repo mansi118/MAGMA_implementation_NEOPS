@@ -19,6 +19,8 @@ export const ingest = internalAction({
     temporalCue: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Cap content at 8K chars to stay within embedding model token limits
+    const content = args.content.slice(0, 8000);
     const eventTime = args.eventTime ?? Date.now();
 
     let embedding: number[];
@@ -28,14 +30,14 @@ export const ingest = internalAction({
 
     if (args.entities && args.keywords) {
       // Pre-extracted: only need embedding
-      embedding = await generateEmbedding(args.content);
+      embedding = await generateEmbedding(content);
       entities = args.entities;
       keywords = args.keywords;
     } else {
       // No pre-extraction: parallelize embedding + metadata extraction
       const [emb, metadata] = await Promise.all([
-        generateEmbedding(args.content),
-        extractMetadata(args.content),
+        generateEmbedding(content),
+        extractMetadata(content),
       ]);
       embedding = emb;
       entities = metadata.entities;
@@ -44,7 +46,7 @@ export const ingest = internalAction({
     }
 
     const nodeId = await ctx.runMutation(internal.memory.fastPath.ingestEvent, {
-      content: args.content,
+      content,
       eventTime,
       embedding,
       scope: args.scope,

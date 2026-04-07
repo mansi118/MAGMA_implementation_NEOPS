@@ -33,9 +33,9 @@ export const ingestEvent = internalMutation({
       consolidated: false,
     });
 
-    // 2. Temporal Edge — link to the most recent prior node in this scope.
-    //    Assumes roughly chronological insertion order. For out-of-order
-    //    backfills, the slow path should repair temporal chains.
+    // 2. Temporal Edge — splice into the chain at the correct position.
+    //    Find prev (latest event before this) and next (earliest event after this).
+    //    If prev→next edge exists, delete it and create prev→new + new→next.
     const prevNode = await ctx.db
       .query("eventNodes")
       .withIndex("by_scope_eventTime", (q) =>
@@ -44,10 +44,36 @@ export const ingestEvent = internalMutation({
       .order("desc")
       .first();
 
+    const nextNode = await ctx.db
+      .query("eventNodes")
+      .withIndex("by_scope_eventTime", (q) =>
+        q.eq("scope", args.scope).gt("eventTime", args.eventTime)
+      )
+      .order("asc")
+      .first();
+
+    // If both prev and next exist, check for an existing prev→next edge to splice
+    if (prevNode && nextNode) {
+      const existingEdge = await ctx.db
+        .query("temporalEdges")
+        .withIndex("by_from", (q) => q.eq("fromNode", prevNode._id))
+        .first();
+      if (existingEdge && existingEdge.toNode === nextNode._id) {
+        await ctx.db.delete(existingEdge._id);
+      }
+    }
+
     if (prevNode) {
       await ctx.db.insert("temporalEdges", {
         fromNode: prevNode._id,
         toNode: nodeId,
+        scope: args.scope,
+      });
+    }
+    if (nextNode) {
+      await ctx.db.insert("temporalEdges", {
+        fromNode: nodeId,
+        toNode: nextNode._id,
         scope: args.scope,
       });
     }

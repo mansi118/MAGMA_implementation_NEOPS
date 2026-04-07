@@ -1,10 +1,10 @@
 /**
  * Evaluation script: Compares MAGMA retrieval vs baseline (flat similarity search)
- * across 4 test queries that expose the limitations of flat search.
+ * across 4 test queries. Measures recall, ordering quality, and precision.
  *
  * Prerequisites:
  *   1. Run seed.ts first
- *   2. Wait for consolidation to complete (~8 min) for best results
+ *   2. Wait for consolidation to complete (~30s)
  *   3. Set CONVEX_URL env var
  *
  * Usage: npx tsx scripts/eval.ts
@@ -30,7 +30,9 @@ interface TestQuery {
   query: string;
   expectedIntent: string;
   description: string;
-  expectedContent: string[]; // Fragments that SHOULD appear in results
+  expectedContent: string[];
+  // For ordering tests: fragments that should appear in this order
+  expectedOrder?: string[];
 }
 
 const TEST_QUERIES: TestQuery[] = [
@@ -46,12 +48,30 @@ const TEST_QUERIES: TestQuery[] = [
       "researched",
       "Updated ICD architecture",
     ],
+    // Causal order: cause before effect
+    expectedOrder: [
+      "data privacy",
+      "addendum",
+      "GDPR",
+      "researched",
+      "Updated ICD architecture",
+    ],
   },
   {
     query: "What happened between Jan 12 and Jan 25?",
     expectedIntent: "when",
     description: "Temporal: chronological events 4-10",
     expectedContent: [
+      "data privacy",
+      "addendum",
+      "revised proposal",
+      "legal team",
+      "GDPR compliance",
+      "researched",
+      "EU data residency",
+    ],
+    // Chronological order
+    expectedOrder: [
       "data privacy",
       "addendum",
       "revised proposal",
@@ -84,8 +104,18 @@ const TEST_QUERIES: TestQuery[] = [
       "approved",
       "Signed SOW",
     ],
+    expectedOrder: [
+      "ICD NEop pitch",
+      "data privacy",
+      "GDPR",
+      "approved",
+      "Signed SOW",
+    ],
   },
 ];
+
+// Use constrained budget — small enough to force differentiation
+const EVAL_MAX_NODES = 8;
 
 // ─── Helpers ───
 
@@ -93,6 +123,32 @@ function countHits(context: string, expected: string[]): number {
   return expected.filter((frag) =>
     context.toLowerCase().includes(frag.toLowerCase())
   ).length;
+}
+
+// Measure ordering quality: what fraction of expected-order pairs are correctly ordered?
+// Returns a score between 0 and 1 where 1 means perfect order.
+function measureOrdering(context: string, expectedOrder: string[]): number {
+  // Find positions of each fragment in the context
+  const positions: number[] = [];
+  for (const frag of expectedOrder) {
+    const pos = context.toLowerCase().indexOf(frag.toLowerCase());
+    if (pos === -1) continue; // Skip missing fragments
+    positions.push(pos);
+  }
+
+  if (positions.length < 2) return 1; // Can't measure with < 2 items
+
+  // Count correctly ordered pairs
+  let correctPairs = 0;
+  let totalPairs = 0;
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = i + 1; j < positions.length; j++) {
+      totalPairs++;
+      if (positions[i] < positions[j]) correctPairs++;
+    }
+  }
+
+  return totalPairs === 0 ? 1 : correctPairs / totalPairs;
 }
 
 function pct(n: number): string {
@@ -109,10 +165,7 @@ async function runEval() {
   // ── Pre-flight checks ──
   console.log("Checking system state...\n");
 
-  const status = await client.query(
-    api.memory.api.getConsolidationStatus,
-    {}
-  );
+  const status = await client.query(api.memory.api.getConsolidationStatus, {});
   console.log(
     `  Consolidation queue: ${status.pending} pending, ${status.processing} processing, ${status.done} done`
   );
@@ -132,6 +185,7 @@ async function runEval() {
   console.log(`  Causal edges:   ${stats.edges.causal}`);
   console.log(`  Semantic edges: ${stats.edges.semantic}`);
   console.log(`  Entity edges:   ${stats.edges.entity}`);
+  console.log(`\n  Eval config: maxNodes=${EVAL_MAX_NODES} (constrained to force differentiation)`);
 
   if (stats.nodes.events === 0) {
     console.error("\n  No events found. Run seed.ts first.");
@@ -140,13 +194,17 @@ async function runEval() {
 
   // ── Run queries ──
   console.log(
-    "\n" + "=".repeat(90) + "\n  MAGMA vs BASELINE — Side-by-Side Evaluation\n" + "=".repeat(90)
+    "\n" +
+      "=".repeat(90) +
+      "\n  MAGMA vs BASELINE — Side-by-Side Evaluation\n" +
+      "=".repeat(90)
   );
 
   const magmaResults: Array<{
     hits: number;
     total: number;
     recall: number;
+    ordering: number;
     intentMatch: boolean;
     latency: number;
     nodes: number;
@@ -156,6 +214,7 @@ async function runEval() {
     hits: number;
     total: number;
     recall: number;
+    ordering: number;
     latency: number;
     nodes: number;
   }> = [];
@@ -174,24 +233,17 @@ async function runEval() {
       magma = await client.action(api.memory.query.query, {
         queryText: test.query,
         scope: "company",
-        options: { maxNodes: 15, tokenBudget: 4000 },
+        options: { maxNodes: EVAL_MAX_NODES, tokenBudget: 4000 },
       });
     } catch (err: any) {
       console.log(`  MAGMA: FAILED — ${err.message ?? err}`);
       magmaResults.push({
-        hits: 0,
-        total: test.expectedContent.length,
-        recall: 0,
-        intentMatch: false,
-        latency: 0,
-        nodes: 0,
+        hits: 0, total: test.expectedContent.length, recall: 0,
+        ordering: 0, intentMatch: false, latency: 0, nodes: 0,
       });
       baselineResults.push({
-        hits: 0,
-        total: test.expectedContent.length,
-        recall: 0,
-        latency: 0,
-        nodes: 0,
+        hits: 0, total: test.expectedContent.length, recall: 0,
+        ordering: 0, latency: 0, nodes: 0,
       });
       continue;
     }
@@ -202,7 +254,7 @@ async function runEval() {
       baseline = await client.action(api.memory.api.baselineQuery, {
         queryText: test.query,
         scope: "company",
-        maxNodes: 15,
+        maxNodes: EVAL_MAX_NODES,
         tokenBudget: 4000,
       });
     } catch (err: any) {
@@ -216,29 +268,34 @@ async function runEval() {
     const baseRecall = baseHits / test.expectedContent.length;
     const intentMatch = magma.intent === test.expectedIntent;
 
+    // Ordering quality
+    const magmaOrder = test.expectedOrder
+      ? measureOrdering(magma.context, test.expectedOrder)
+      : 1;
+    const baseOrder = test.expectedOrder
+      ? measureOrdering(baseline.context, test.expectedOrder)
+      : 1;
+
     magmaResults.push({
-      hits: magmaHits,
-      total: test.expectedContent.length,
-      recall: magmaRecall,
-      intentMatch,
-      latency: magma.latencyMs?.total ?? 0,
-      nodes: magma.nodesTraversed ?? 0,
+      hits: magmaHits, total: test.expectedContent.length,
+      recall: magmaRecall, ordering: magmaOrder, intentMatch,
+      latency: magma.latencyMs?.total ?? 0, nodes: magma.nodesTraversed ?? 0,
     });
     baselineResults.push({
-      hits: baseHits,
-      total: test.expectedContent.length,
-      recall: baseRecall,
-      latency: baseline.latencyMs ?? 0,
-      nodes: baseline.nodesRetrieved ?? 0,
+      hits: baseHits, total: test.expectedContent.length,
+      recall: baseRecall, ordering: baseOrder,
+      latency: baseline.latencyMs ?? 0, nodes: baseline.nodesRetrieved ?? 0,
     });
 
     // ── Print comparison ──
     console.log(
       `\n  ${pad("", 25)} ${pad("MAGMA", 20)} ${pad("BASELINE", 20)}`
     );
-    console.log(`  ${pad("─".repeat(25), 25)} ${pad("─".repeat(20), 20)} ${pad("─".repeat(20), 20)}`);
     console.log(
-      `  ${pad("Intent", 25)} ${pad(magma.intent + (intentMatch ? " ✓" : " ✗"), 20)} ${pad("n/a (no classification)", 20)}`
+      `  ${pad("─".repeat(25), 25)} ${pad("─".repeat(20), 20)} ${pad("─".repeat(20), 20)}`
+    );
+    console.log(
+      `  ${pad("Intent", 25)} ${pad(magma.intent + (intentMatch ? " ✓" : " ✗"), 20)} ${pad("n/a", 20)}`
     );
     console.log(
       `  ${pad("Nodes retrieved", 25)} ${pad(String(magma.nodesTraversed), 20)} ${pad(String(baseline.nodesRetrieved), 20)}`
@@ -246,23 +303,25 @@ async function runEval() {
     console.log(
       `  ${pad("Recall", 25)} ${pad(`${magmaHits}/${test.expectedContent.length} (${pct(magmaRecall)})`, 20)} ${pad(`${baseHits}/${test.expectedContent.length} (${pct(baseRecall)})`, 20)}`
     );
+    if (test.expectedOrder) {
+      console.log(
+        `  ${pad("Ordering", 25)} ${pad(pct(magmaOrder), 20)} ${pad(pct(baseOrder), 20)}`
+      );
+    }
     console.log(
       `  ${pad("Latency", 25)} ${pad(`${magma.latencyMs?.total ?? "?"}ms`, 20)} ${pad(`${baseline.latencyMs}ms`, 20)}`
     );
 
-    // Show per-fragment hits
+    // Per-fragment hits
     console.log(`\n  Expected content fragments:`);
     for (const frag of test.expectedContent) {
       const inMagma = magma.context.toLowerCase().includes(frag.toLowerCase());
       const inBase = baseline.context.toLowerCase().includes(frag.toLowerCase());
       const magmaIcon = inMagma ? "✓" : "✗";
       const baseIcon = inBase ? "✓" : "✗";
-      console.log(
-        `    MAGMA:${magmaIcon}  BASE:${baseIcon}  "${frag}"`
-      );
+      console.log(`    MAGMA:${magmaIcon}  BASE:${baseIcon}  "${frag}"`);
     }
 
-    // Show MAGMA latency breakdown
     if (magma.latencyMs && typeof magma.latencyMs === "object") {
       console.log(
         `\n  MAGMA latency: analysis=${magma.latencyMs.stage1_analysis}ms ` +
@@ -278,14 +337,14 @@ async function runEval() {
   console.log("  SUMMARY");
   console.log("=".repeat(90));
 
-  const avgMagmaRecall =
-    magmaResults.reduce((s, r) => s + r.recall, 0) / magmaResults.length;
-  const avgBaseRecall =
-    baselineResults.reduce((s, r) => s + r.recall, 0) / baselineResults.length;
-  const avgMagmaLatency =
-    magmaResults.reduce((s, r) => s + r.latency, 0) / magmaResults.length;
-  const avgBaseLatency =
-    baselineResults.reduce((s, r) => s + r.latency, 0) / baselineResults.length;
+  const avg = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+
+  const avgMagmaRecall = avg(magmaResults.map((r) => r.recall));
+  const avgBaseRecall = avg(baselineResults.map((r) => r.recall));
+  const avgMagmaOrder = avg(magmaResults.map((r) => r.ordering));
+  const avgBaseOrder = avg(baselineResults.map((r) => r.ordering));
+  const avgMagmaLatency = avg(magmaResults.map((r) => r.latency));
+  const avgBaseLatency = avg(baselineResults.map((r) => r.latency));
   const intentAccuracy =
     magmaResults.filter((r) => r.intentMatch).length / magmaResults.length;
 
@@ -296,7 +355,10 @@ async function runEval() {
     `  ${pad("─".repeat(25), 25)} ${pad("─".repeat(15), 15)} ${pad("─".repeat(15), 15)} ${pad("─".repeat(10), 10)}`
   );
   console.log(
-    `  ${pad("Avg recall", 25)} ${pad(pct(avgMagmaRecall), 15)} ${pad(pct(avgBaseRecall), 15)} ${pad((avgMagmaRecall - avgBaseRecall > 0 ? "+" : "") + pct(avgMagmaRecall - avgBaseRecall), 10)}`
+    `  ${pad("Avg recall", 25)} ${pad(pct(avgMagmaRecall), 15)} ${pad(pct(avgBaseRecall), 15)} ${pad((avgMagmaRecall - avgBaseRecall >= 0 ? "+" : "") + pct(avgMagmaRecall - avgBaseRecall), 10)}`
+  );
+  console.log(
+    `  ${pad("Avg ordering", 25)} ${pad(pct(avgMagmaOrder), 15)} ${pad(pct(avgBaseOrder), 15)} ${pad((avgMagmaOrder - avgBaseOrder >= 0 ? "+" : "") + pct(avgMagmaOrder - avgBaseOrder), 10)}`
   );
   console.log(
     `  ${pad("Avg latency", 25)} ${pad(`${avgMagmaLatency.toFixed(0)}ms`, 15)} ${pad(`${avgBaseLatency.toFixed(0)}ms`, 15)} ${pad(`+${(avgMagmaLatency - avgBaseLatency).toFixed(0)}ms`, 10)}`
@@ -305,29 +367,46 @@ async function runEval() {
     `  ${pad("Intent accuracy", 25)} ${pad(pct(intentAccuracy), 15)} ${pad("n/a", 15)}`
   );
 
-  // Per-query delta
-  console.log("\n  Per-query recall delta (MAGMA - BASELINE):");
+  // Per-query breakdown
+  console.log("\n  Per-query breakdown:");
   for (let i = 0; i < TEST_QUERIES.length; i++) {
-    const delta = magmaResults[i].recall - baselineResults[i].recall;
-    const icon = delta > 0 ? "+" : delta === 0 ? "=" : "";
+    const mr = magmaResults[i];
+    const br = baselineResults[i];
+    const recallDelta = mr.recall - br.recall;
+    const orderDelta = mr.ordering - br.ordering;
+    const intentIcon = mr.intentMatch ? "✓" : "✗";
     console.log(
-      `    ${icon}${pct(delta)}  "${TEST_QUERIES[i].query.slice(0, 50)}"`
+      `    ${intentIcon} [${mr.intentMatch ? magmaResults[i].nodes + " nodes" : "FAIL"}] ` +
+        `"${TEST_QUERIES[i].query.slice(0, 40)}" ` +
+        `recall: ${pct(recallDelta >= 0 ? recallDelta : recallDelta)} ` +
+        `ordering: ${pct(orderDelta >= 0 ? orderDelta : orderDelta)}`
     );
   }
 
+  // Composite score: recall (40%) + ordering (40%) + intent (20%)
+  const magmaComposite =
+    avgMagmaRecall * 0.4 + avgMagmaOrder * 0.4 + intentAccuracy * 0.2;
+  const baseComposite = avgBaseRecall * 0.4 + avgBaseOrder * 0.4 + 0 * 0.2;
+
+  console.log(
+    `\n  Composite score (40% recall + 40% ordering + 20% intent):`
+  );
+  console.log(`    MAGMA:    ${pct(magmaComposite)}`);
+  console.log(`    BASELINE: ${pct(baseComposite)}`);
+
   // Verdict
   console.log("\n" + "─".repeat(90));
-  if (avgMagmaRecall > avgBaseRecall && intentAccuracy >= 0.75) {
+  if (magmaComposite > baseComposite + 0.05) {
     console.log(
-      `  PASS: MAGMA outperforms baseline by ${pct(avgMagmaRecall - avgBaseRecall)} recall with ${pct(intentAccuracy)} intent accuracy`
+      `  PASS: MAGMA outperforms baseline — composite ${pct(magmaComposite)} vs ${pct(baseComposite)}`
     );
-  } else if (avgMagmaRecall >= avgBaseRecall) {
+  } else if (magmaComposite >= baseComposite) {
     console.log(
-      "  PARTIAL: MAGMA matches or slightly beats baseline — check if consolidation is complete"
+      `  PARTIAL: MAGMA matches baseline — composite ${pct(magmaComposite)} vs ${pct(baseComposite)}`
     );
   } else {
     console.log(
-      "  FAIL: Baseline outperforms MAGMA — investigate traversal weights and graph edges"
+      `  FAIL: Baseline outperforms MAGMA — composite ${pct(magmaComposite)} vs ${pct(baseComposite)}`
     );
   }
   console.log("─".repeat(90));

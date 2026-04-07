@@ -107,14 +107,17 @@ export const segmentAndIngest = action({
 
     // 2. Ingest all events in parallel.
     //    Pre-extracted entities/keywords skip the redundant extractMetadata call.
+    // Offset eventTimes by 1ms per event to preserve ordering.
+    // Without this, all segmented events get identical timestamps
+    // and the temporal chain treats them as simultaneous.
     const nodeIds = await Promise.all(
-      events.map((event) =>
+      events.map((event, i) =>
         ctx.runAction(internal.memory.ingest.ingest, {
           content: event.content,
           scope: args.scope,
           sourceType: event.eventType || args.sourceType,
           sourceId: args.sourceId,
-          eventTime: baseTime,
+          eventTime: baseTime + i,
           entities: event.entities,
           keywords: event.keywords,
           temporalCue: event.temporalCue ?? undefined,

@@ -259,79 +259,64 @@ export const baselineQuery = action({
 // ─── Admin API ───
 
 // Graph statistics: node and edge counts by type and scope.
+// Bounded: counts up to COUNT_LIMIT to prevent OOM at scale.
 export const getGraphStats = convexQuery({
   args: {
     scope: v.optional(v.union(v.literal("company"), v.literal("private"))),
   },
   handler: async (ctx, args) => {
-    let eventNodesQuery = ctx.db.query("eventNodes");
-    if (args.scope) {
-      eventNodesQuery = eventNodesQuery.withIndex("by_scope", (q) =>
-        q.eq("scope", args.scope!)
-      );
-    }
-    const eventNodes = await eventNodesQuery.collect();
+    const COUNT_LIMIT = 10000;
 
-    let entityNodesQuery = ctx.db.query("entityNodes");
-    if (args.scope) {
-      entityNodesQuery = entityNodesQuery.withIndex("by_scope", (q) =>
-        q.eq("scope", args.scope!)
-      );
+    // Helper to count docs in a query (bounded)
+    async function countQuery(query: any): Promise<number> {
+      const docs = await query.take(COUNT_LIMIT);
+      return docs.length;
     }
-    const entityNodes = await entityNodesQuery.collect();
 
-    let temporalQuery = ctx.db.query("temporalEdges");
-    if (args.scope) {
-      temporalQuery = temporalQuery.withIndex("by_scope", (q) =>
-        q.eq("scope", args.scope!)
-      );
-    }
-    const temporalEdges = await temporalQuery.collect();
+    let eventQ = ctx.db.query("eventNodes");
+    if (args.scope) eventQ = eventQ.withIndex("by_scope", (q) => q.eq("scope", args.scope!));
+    const eventCount = await countQuery(eventQ);
 
-    let causalQuery = ctx.db.query("causalEdges");
-    if (args.scope) {
-      causalQuery = causalQuery.withIndex("by_scope", (q) =>
-        q.eq("scope", args.scope!)
-      );
-    }
-    const causalEdges = await causalQuery.collect();
+    // For consolidated count, we need to filter — take events and count
+    let eventForConsolidated = ctx.db.query("eventNodes");
+    if (args.scope) eventForConsolidated = eventForConsolidated.withIndex("by_scope", (q) => q.eq("scope", args.scope!));
+    const events = await eventForConsolidated.take(COUNT_LIMIT);
+    const consolidated = events.filter((n: any) => n.consolidated).length;
 
-    let semanticQuery = ctx.db.query("semanticEdges");
-    if (args.scope) {
-      semanticQuery = semanticQuery.withIndex("by_scope", (q) =>
-        q.eq("scope", args.scope!)
-      );
-    }
-    const semanticEdges = await semanticQuery.collect();
+    let entityQ = ctx.db.query("entityNodes");
+    if (args.scope) entityQ = entityQ.withIndex("by_scope", (q) => q.eq("scope", args.scope!));
+    const entityCount = await countQuery(entityQ);
 
-    let entityEdgesQuery = ctx.db.query("entityEdges");
-    if (args.scope) {
-      entityEdgesQuery = entityEdgesQuery.withIndex("by_scope", (q) =>
-        q.eq("scope", args.scope!)
-      );
-    }
-    const entityEdges = await entityEdgesQuery.collect();
+    let tempQ = ctx.db.query("temporalEdges");
+    if (args.scope) tempQ = tempQ.withIndex("by_scope", (q) => q.eq("scope", args.scope!));
+    const temporalCount = await countQuery(tempQ);
 
-    const consolidated = eventNodes.filter((n) => n.consolidated).length;
+    let causalQ = ctx.db.query("causalEdges");
+    if (args.scope) causalQ = causalQ.withIndex("by_scope", (q) => q.eq("scope", args.scope!));
+    const causalCount = await countQuery(causalQ);
+
+    let semQ = ctx.db.query("semanticEdges");
+    if (args.scope) semQ = semQ.withIndex("by_scope", (q) => q.eq("scope", args.scope!));
+    const semanticCount = await countQuery(semQ);
+
+    let entEdgeQ = ctx.db.query("entityEdges");
+    if (args.scope) entEdgeQ = entEdgeQ.withIndex("by_scope", (q) => q.eq("scope", args.scope!));
+    const entityEdgeCount = await countQuery(entEdgeQ);
 
     return {
       scope: args.scope ?? "all",
       nodes: {
-        events: eventNodes.length,
-        entities: entityNodes.length,
+        events: eventCount,
+        entities: entityCount,
         consolidated,
-        unconsolidated: eventNodes.length - consolidated,
+        unconsolidated: eventCount - consolidated,
       },
       edges: {
-        temporal: temporalEdges.length,
-        causal: causalEdges.length,
-        semantic: semanticEdges.length,
-        entity: entityEdges.length,
-        total:
-          temporalEdges.length +
-          causalEdges.length +
-          semanticEdges.length +
-          entityEdges.length,
+        temporal: temporalCount,
+        causal: causalCount,
+        semantic: semanticCount,
+        entity: entityEdgeCount,
+        total: temporalCount + causalCount + semanticCount + entityEdgeCount,
       },
     };
   },
