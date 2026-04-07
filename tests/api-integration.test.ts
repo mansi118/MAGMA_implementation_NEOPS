@@ -35,7 +35,7 @@ describe.skipIf(!hasKeys)("Groq Chat API", () => {
     expect(content).toBeTruthy();
     const parsed = JSON.parse(content!);
     expect(parsed).toHaveProperty("status");
-  }, 15000);
+  }, 60000);
 
   it("handles intent classification prompt", async () => {
     const response = await getChatClient().chat.completions.create({
@@ -58,7 +58,7 @@ describe.skipIf(!hasKeys)("Groq Chat API", () => {
     expect(parsed.intent).toBe("why");
     expect(Array.isArray(parsed.entities)).toBe(true);
     expect(Array.isArray(parsed.keywords)).toBe(true);
-  }, 15000);
+  }, 60000);
 
   it("handles entity extraction prompt", async () => {
     const response = await getChatClient().chat.completions.create({
@@ -85,7 +85,7 @@ describe.skipIf(!hasKeys)("Groq Chat API", () => {
     // Should extract "akhilesh" as an entity
     const lowerEntities = parsed.entities.map((e: string) => e.toLowerCase());
     expect(lowerEntities).toContain("akhilesh");
-  }, 15000);
+  }, 60000);
 
   it("handles causal inference prompt", async () => {
     const response = await getChatClient().chat.completions.create({
@@ -125,7 +125,7 @@ Rules: cause must be earlier than effect, confidence > 0.6, at least one endpoin
       expect(edge).toHaveProperty("reasoning");
       expect(edge.confidence).toBeGreaterThan(0.5);
     }
-  }, 15000);
+  }, 60000);
 
   it("handles event segmentation prompt", async () => {
     const response = await getChatClient().chat.completions.create({
@@ -156,7 +156,7 @@ Rules: cause must be earlier than effect, confidence > 0.6, at least one endpoin
       expect(event).toHaveProperty("content");
       expect(typeof event.content).toBe("string");
     }
-  }, 15000);
+  }, 60000);
 
   it("handles entity classification prompt", async () => {
     const response = await getChatClient().chat.completions.create({
@@ -186,7 +186,7 @@ Return JSON: {"entities": [{"name": "...", "type": "person"|"company"|"project"|
     );
     expect(akhilesh).toBeTruthy();
     expect(akhilesh.type).toBe("person");
-  }, 15000);
+  }, 60000);
 });
 
 describe.skipIf(!hasKeys)("OpenRouter Embeddings API", () => {
@@ -202,7 +202,7 @@ describe.skipIf(!hasKeys)("OpenRouter Embeddings API", () => {
     for (const val of response.data[0].embedding.slice(0, 10)) {
       expect(Number.isFinite(val)).toBe(true);
     }
-  }, 15000);
+  }, 60000);
 
   it("similar texts produce similar embeddings", async () => {
     const [r1, r2, r3] = await Promise.all([
@@ -235,5 +235,5 @@ describe.skipIf(!hasKeys)("OpenRouter Embeddings API", () => {
     expect(simSimilar).toBeGreaterThan(simDifferent);
     expect(simSimilar).toBeGreaterThan(0.7);
     expect(simDifferent).toBeLessThan(0.5);
-  }, 20000);
+  }, 60000);
 });

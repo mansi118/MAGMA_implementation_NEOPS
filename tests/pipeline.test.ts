@@ -76,7 +76,7 @@ describe.skipIf(!hasKeys)("Pipeline: Embedding + Traversal Integration", () => {
     // so embeddings may be close. Just verify related > unrelated (weather).
     const sim02 = cosineSimilarity(embeddings[0], embeddings[2]);
     expect(sim02).toBeGreaterThan(sim04); // GDPR more related than weather
-  }, 30000);
+  }, 60000);
 
   it("intent classification works for all 4 test queries", async () => {
     const queries = [
@@ -93,7 +93,7 @@ describe.skipIf(!hasKeys)("Pipeline: Embedding + Traversal Integration", () => {
     for (let i = 0; i < queries.length; i++) {
       expect(results[i]).toBe(queries[i].expected);
     }
-  }, 30000);
+  }, 60000);
 });
 
 describe.skipIf(!hasKeys)("Pipeline: Full Traversal with Real Embeddings", () => {
@@ -164,7 +164,7 @@ describe.skipIf(!hasKeys)("Pipeline: Full Traversal with Real Embeddings", () =>
     expect(ids).toContain("e4"); // anchor
     // With "why" intent, causal edges weighted 0.8 — should follow the chain
     expect(result.length).toBeGreaterThan(1);
-  }, 30000);
+  }, 60000);
 
   it("synthesis produces correct ordering for 'why' intent", async () => {
     const contents = [
@@ -194,7 +194,7 @@ describe.skipIf(!hasKeys)("Pipeline: Full Traversal with Real Embeddings", () =>
     expect(result.context).toContain("Privacy concern");
     expect(result.context).toContain("Addendum");
     expect(result.context).toContain("Architecture");
-  }, 20000);
+  }, 60000);
 
   it("'when' query orders results chronologically", async () => {
     const contents = [
@@ -225,7 +225,7 @@ describe.skipIf(!hasKeys)("Pipeline: Full Traversal with Real Embeddings", () =>
     expect(result.nodes[0].id).toBe("e2");
     expect(result.nodes[1].id).toBe("e3");
     expect(result.nodes[2].id).toBe("e1");
-  }, 20000);
+  }, 60000);
 
   it("intent-weighted scoring favors correct edge types", async () => {
     const queryEmb = await embed("Why did this happen?");
@@ -248,7 +248,7 @@ describe.skipIf(!hasKeys)("Pipeline: Full Traversal with Real Embeddings", () =>
     expect(causalWhyScore).toBeGreaterThan(temporalWhyScore);
     // "when" should prefer temporal over causal
     expect(temporalWhenScore).toBeGreaterThan(causalWhenScore);
-  }, 20000);
+  }, 60000);
 });
 
 describe.skipIf(!hasKeys)("Pipeline: Causal Inference via LLM", () => {
@@ -302,5 +302,5 @@ Rules:
       expect(edge.confidence).toBeGreaterThan(0);
       expect(typeof edge.reasoning).toBe("string");
     }
-  }, 20000);
+  }, 60000);
 });
